@@ -44,6 +44,8 @@ class RubyCache(SimObject):
         "0B", "block size in bytes. 0 means default RubyBlockSize"
     )
 
+    atomicLatency = Param.Cycles(1, "Cycles for an atomic operation")
+    atomicALUs = Param.Int(1, "Number of atomic ALUs")
     dataArrayBanks = Param.Int(1, "Number of banks for the data array")
     tagArrayBanks = Param.Int(1, "Number of banks for the tag array")
     dataAccessLatency = Param.Cycles(1, "cycles for a data array access")

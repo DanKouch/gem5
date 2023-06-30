@@ -92,6 +92,7 @@ machine(MachineType:TCC, "TCC Cache")
     DataArrayWrite,   desc="Write the data array";
     TagArrayRead,     desc="Read the data array";
     TagArrayWrite,    desc="Write the data array";
+    AtomicALUOperation,  desc="Atomic ALU operation";
   }
 
 
@@ -221,6 +222,8 @@ machine(MachineType:TCC, "TCC Cache")
         L2cache.recordRequestType(CacheRequestType:TagArrayRead, addr);
     } else if (request_type == RequestType:TagArrayWrite) {
         L2cache.recordRequestType(CacheRequestType:TagArrayWrite, addr);
+    } else if (request_type == RequestType:AtomicALUOperation) {
+        L2cache.recordRequestType(CacheRequestType:AtomicALUOperation, addr);
     }
   }
 
@@ -233,6 +236,8 @@ machine(MachineType:TCC, "TCC Cache")
       return L2cache.checkResourceAvailable(CacheResourceType:TagArray, addr);
     } else if (request_type == RequestType:TagArrayWrite) {
       return L2cache.checkResourceAvailable(CacheResourceType:TagArray, addr);
+    } else if (request_type == RequestType:AtomicALUOperation) {
+      return L2cache.checkResourceAvailable(CacheResourceType:AtomicALUArray, addr);
     } else {
       error("Invalid RequestType type in checkResourceAvailable");
       return true;
@@ -834,7 +839,7 @@ machine(MachineType:TCC, "TCC Cache")
     st_stallAndWaitRequest;
   }
 
-  transition(V, Atomic, M) {TagArrayRead, DataArrayWrite} {
+  transition(V, Atomic, M) {TagArrayRead, DataArrayRead, DataArrayWrite, AtomicALUOperation} {
     p_profileHit;
     wdb_writeDirtyBytes;
     pa_performAtomic;
@@ -842,7 +847,7 @@ machine(MachineType:TCC, "TCC Cache")
     p_popRequestQueue;
   }
 
-  transition(I, Atomic, M) {TagArrayRead, TagArrayWrite, DataArrayWrite} {
+  transition(I, Atomic, M) {TagArrayRead, TagArrayWrite, DataArrayWrite, DataArrayRead, AtomicALUOperation} {
     p_profileMiss;
     a_allocateBlock;
     ut_updateTag;
@@ -860,7 +865,7 @@ machine(MachineType:TCC, "TCC Cache")
     st_stallAndWaitRequest;
   }
 
-  transition({M, W}, Atomic) {TagArrayRead, TagArrayWrite, DataArrayWrite} {
+  transition({M, W}, Atomic) {TagArrayRead, DataArrayWrite, DataArrayRead, AtomicALUOperation} {
     p_profileHit;
     wdb_writeDirtyBytes;
     pa_performAtomic;
@@ -898,7 +903,7 @@ machine(MachineType:TCC, "TCC Cache")
     st_stallAndWaitRequest;
   }
 
-  transition({M, W}, AtomicPassOn, WI) {TagArrayRead} {
+  transition({M, W}, AtomicPassOn, WI) {TagArrayRead, DataArrayRead} {
     t_allocateTBE;
     wb_writeBack;
     // after writing back the current line, we need to wait for it to be done
@@ -1039,7 +1044,7 @@ machine(MachineType:TCC, "TCC Cache")
     dt_deallocateTBE;
   }
 
-  transition(A, Data, M) {TagArrayRead, TagArrayWrite, DataArrayWrite} {
+  transition(A, Data, M) {TagArrayRead, TagArrayWrite, DataArrayRead, DataArrayWrite, AtomicALUOperation} {
     a_allocateBlock;
     pa_performAtomic;
     bar_sendBypassedAtomicResponse;
