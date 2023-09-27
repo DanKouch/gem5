@@ -997,10 +997,9 @@ machine(MachineType:Directory, "AMD Baseline protocol")
 
   action(wd_writeBackData, "wd", desc="Write back data if needed") {
     if (tbe.wtData || tbe.atomicData || tbe.Dirty == false) {
-    // If SLC is not set, the atomic is handled in the L2
-    // Atomic needs to be done at the L3 only if this is
-    // not the case
-
+      // Only perform atomics in the directory if the SLC bit is set.
+      // Note: The TCC will set the SLC explicitly if it is configured
+      // as a write-through cache.
       if (tbe.atomicData && tbe.isSLCSet) {
         tbe.DataBlk.atomicPartial(tbe.DataBlk, tbe.writeMask);
       }
