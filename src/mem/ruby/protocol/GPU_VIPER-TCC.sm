@@ -105,16 +105,17 @@ machine(MachineType:TCC, "TCC Cache")
   }
 
   structure(TBE, desc="...") {
-    State TBEState,     desc="Transient state";
-    DataBlock DataBlk,  desc="data for the block";
-    bool Dirty,         desc="Is the data dirty?";
-    bool Shared,        desc="Victim hit by shared probe";
-    MachineID From,     desc="Waiting for writeback from...";
-    NetDest Destination, desc="Data destination";
-    int numAtomics,     desc="number remaining atomics";
-    int atomicDoneCnt,  desc="number AtomicDones triggered";
-    bool isGLCSet,      desc="Bypass L1 Cache";
-    bool isSLCSet,      desc="Bypass L1 and L2 Cache";
+    State TBEState,             desc="Transient state";
+    DataBlock DataBlk,          desc="data for the block";
+    bool Dirty,                 desc="Is the data dirty?";
+    bool Shared,                desc="Victim hit by shared probe";
+    MachineID From,             desc="Waiting for writeback from...";
+    NetDest Destination,        desc="Data destination";
+    int numAtomics,             desc="number of remaining atomics which were passed to directory";
+    int atomicDoneCnt,          desc="number AtomicDones triggered";
+    bool isGLCSet,              desc="Bypass L1 Cache";
+    bool isSLCSet,              desc="Bypass L1 and L2 Cache";
+    WriteMask atomicWriteMask,  desc="Atomic write mask";
   }
 
   structure(TBETable, external="yes") {
@@ -369,7 +370,7 @@ machine(MachineType:TCC, "TCC Cache")
           // TCC will perform the atomic on the return path on Event:Data.
           // The action will invalidate the cache line if SLC is set and the address is
           // in the cache.
-          if(in_msg.isSLCSet || !WB || !presentOrAvail(in_msg.addr)) {
+          if(in_msg.isSLCSet || !WB) {
             trigger(Event:AtomicPassOn, in_msg.addr, cache_entry, tbe);
           } else {
             trigger(Event:Atomic, in_msg.addr, cache_entry, tbe);
@@ -532,7 +533,23 @@ machine(MachineType:TCC, "TCC Cache")
     cache_entry.DataBlk.clearAtomicLogEntries();
   }
 
-  action(bar_sendBypassedAtomicResponse, "bar", desc="send bypassed Atomic Ack") {
+  action(barplr_sendBypassedAtomicPerformedLocallyResponse, "barplr", desc="send bypassed Atomic Ack") {
+    peek(responseFromNB_in, ResponseMsg) {
+        enqueue(responseToCore_out, ResponseMsg, l2_response_latency) {
+          out_msg.addr := address;
+          out_msg.Type := CoherenceResponseType:TDSysResp;
+          out_msg.Destination.add(in_msg.WTRequestor);
+          out_msg.Sender := machineID;
+          out_msg.MessageSize := in_msg.MessageSize;
+          out_msg.DataBlk := cache_entry.DataBlk;
+          out_msg.isGLCSet := tbe.isGLCSet;
+          out_msg.isSLCSet := tbe.isSLCSet;
+        }
+    }
+    cache_entry.DataBlk.clearAtomicLogEntries();
+  }
+
+  action(bapdr_sendBypassedAtomicPerformedInDirectoryResponse, "bapdr", desc="send bypassed Atomic Ack") {
     peek(responseFromNB_in, ResponseMsg) {
         enqueue(responseToCore_out, ResponseMsg, l2_response_latency) {
           out_msg.addr := address;
@@ -578,6 +595,10 @@ machine(MachineType:TCC, "TCC Cache")
         }
         tbe.isGLCSet := in_msg.isGLCSet;
         tbe.isSLCSet := in_msg.isSLCSet;
+        if(in_msg.Type == CoherenceRequestType:Atomic){
+          tbe.atomicWriteMask.clear();
+          tbe.atomicWriteMask.orMask(in_msg.writeMask);
+        }
       }
     }
   }
@@ -600,6 +621,20 @@ machine(MachineType:TCC, "TCC Cache")
       cache_entry.DataBlk.copyPartial(in_msg.DataBlk,in_msg.writeMask);
       cache_entry.writeMask.orMask(in_msg.writeMask);
       DPRINTF(RubySlicc, "Writing to TCC: %s\n", in_msg);
+    }
+  }
+
+  action(wdb_writeResponseDirtyBytes, "wrdb", desc="write data to TCC") {
+    peek(responseFromNB_in, ResponseMsg) {
+      cache_entry.DataBlk := in_msg.DataBlk;
+      cache_entry.writeMask.orMask(tbe.atomicWriteMask);
+      DPRINTF(RubySlicc, "Writing to TCC: %s\n", in_msg);
+    }
+  }
+
+  action(owm_orWriteMask, "owm", desc="or TCCs write mask") {
+    peek(coreRequestNetwork_in, CPURequestMsg) {
+      cache_entry.writeMask.orMask(in_msg.writeMask);
     }
   }
 
@@ -713,6 +748,10 @@ machine(MachineType:TCC, "TCC Cache")
         }
       }
     }
+  }
+
+  action(dnant_decrementNumAtomicsNoTrigger, "dnant", desc="inc num atomics") {
+    tbe.numAtomics := tbe.numAtomics - 1;
   }
 
   action(dadc_decrementAtomicDoneCnt, "dadc", desc="decrement atomics done cnt flag") {
@@ -845,17 +884,8 @@ machine(MachineType:TCC, "TCC Cache")
 
   transition(V, Atomic, M) {TagArrayRead, DataArrayWrite} {
     p_profileHit;
-    wdb_writeDirtyBytes;
-    pa_performAtomic;
-    ar_sendAtomicResponse;
-    p_popRequestQueue;
-  }
-
-  transition(I, Atomic, M) {TagArrayRead, TagArrayWrite, DataArrayWrite} {
-    p_profileMiss;
-    a_allocateBlock;
     ut_updateTag;
-    wdb_writeDirtyBytes;
+    owm_orWriteMask;
     pa_performAtomic;
     ar_sendAtomicResponse;
     p_popRequestQueue;
@@ -869,9 +899,19 @@ machine(MachineType:TCC, "TCC Cache")
     st_stallAndWaitRequest;
   }
 
-  transition({M, W}, Atomic) {TagArrayRead, TagArrayWrite, DataArrayWrite} {
+  transition(W, Atomic, WI) {
+    t_allocateTBE;
+    wb_writeBack;
+    // need to try this request again after writing back the current entry -- to
+    // do so, put it with other stalled requests in a buffer to reduce resource
+    // contention since they won't try again every cycle and will instead only
+    // try again once woken up
+    st_stallAndWaitRequest;
+  }
+
+  transition(M, Atomic) {TagArrayRead, TagArrayWrite, DataArrayWrite} {
     p_profileHit;
-    wdb_writeDirtyBytes;
+    owm_orWriteMask;
     pa_performAtomic;
     ar_sendAtomicResponse;
     p_popRequestQueue;
@@ -890,7 +930,7 @@ machine(MachineType:TCC, "TCC Cache")
     p_popRequestQueue;
   }
 
-  transition(I, AtomicPassOn, A) {TagArrayRead} {
+  transition(I, {Atomic, AtomicPassOn}, A) {TagArrayRead} {
     p_profileMiss;
     i_invL2;
     t_allocateTBE;
@@ -1027,7 +1067,7 @@ machine(MachineType:TCC, "TCC Cache")
   }
 
   transition(A, Bypass) {TagArrayRead, TagArrayWrite, DataArrayWrite} {
-    bar_sendBypassedAtomicResponse;
+    bapdr_sendBypassedAtomicPerformedInDirectoryResponse;
     dna_decrementNumAtomics;
     pr_popResponseQueue;
   }
@@ -1050,9 +1090,10 @@ machine(MachineType:TCC, "TCC Cache")
 
   transition(A, Data, M) {TagArrayRead, TagArrayWrite, DataArrayWrite} {
     a_allocateBlock;
+    wdb_writeResponseDirtyBytes;
     pa_performAtomic;
-    bar_sendBypassedAtomicResponse;
-    dna_decrementNumAtomics;
+    barplr_sendBypassedAtomicPerformedLocallyResponse;
+    dnant_decrementNumAtomicsNoTrigger;
     pr_popResponseQueue;
   }
 
