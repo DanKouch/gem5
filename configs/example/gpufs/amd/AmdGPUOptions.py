@@ -212,6 +212,44 @@ def addAmdGPUOptions(parser):
         help="Count Page Accesses and output in per-CU output files",
     )
     parser.add_argument(
+        "--max-cu-tokens",
+        type=int,
+        default=4,
+        help="Number of coalescer tokens per CU",
+    )
+    parser.add_argument(
+        "--vrf_lm_bus_latency",
+        type=int,
+        default=1,
+        help="Latency while accessing shared memory",
+    )
+    parser.add_argument(
+        "--mem-req-latency",
+        type=int,
+        default=50,
+        help="Latency for requests from the cu to ruby.",
+    )
+    parser.add_argument(
+        "--mem-resp-latency",
+        type=int,
+        default=50,
+        help="Latency for responses from ruby to the cu.",
+    )
+    parser.add_argument(
+        "--scalar-mem-req-latency",
+        type=int,
+        default=50,
+        help="Latency for scalar requests from the cu to ruby.",
+    )
+    parser.add_argument(
+        "--scalar-mem-resp-latency",
+        type=int,
+        # Set to 0 as the scalar cache response path does not model
+        # response latency yet and this parameter is currently not used
+        default=0,
+        help="Latency for scalar responses from ruby to the cu.",
+    )
+    parser.add_argument(
         "--TLB-prefetch", type=int, help="prefetch depth for TLBs"
     )
     parser.add_argument(

@@ -75,6 +75,12 @@ def createGPU(system, args):
                 execPolicy=args.CUExecPolicy,
                 localMemBarrier=args.LocalMemBarrier,
                 countPages=args.countPages,
+                max_cu_tokens=args.max_cu_tokens,
+                vrf_lm_bus_latency=args.vrf_lm_bus_latency,
+                mem_req_latency=args.mem_req_latency,
+                mem_resp_latency=args.mem_resp_latency,
+                scalar_mem_req_latency=args.scalar_mem_req_latency,
+                scalar_mem_resp_latency=args.scalar_mem_resp_latency,
                 localDataStore=LdsState(
                     banks=args.numLdsBanks,
                     bankConflictPenalty=args.ldsBankConflictPenalty,
